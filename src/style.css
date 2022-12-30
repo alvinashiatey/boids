@@ -73,3 +73,8 @@ select {
         scroll-behavior: auto !important;
     }
 }
+
+#app {
+    width: 100vw;
+    height: 100vh;
+}

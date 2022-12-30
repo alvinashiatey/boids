@@ -1,61 +1,45 @@
-import * as THREE from 'three';
-import {Boid} from "./boid";
+import { Boids, BoidsRenderer, BoidContainer} from "./boid";
 
 
 export class World {
-    public scene: THREE.Scene;
-    public camera: THREE.PerspectiveCamera;
-    public renderer: THREE.WebGLRenderer;
-    public boids: Boid[] = [];
-    public clock: THREE.Clock;
-    private size: { width: number; height: number };
+    public renderer: BoidsRenderer;
+    public boids: Boids ;
+    private readonly count: number;
+    private running: boolean;
+    private readonly boidContainer: BoidContainer;
 
     constructor() {
-        this.renderer = new THREE.WebGLRenderer({antialias: true});
-        this.size = {
-            width: window.innerWidth,
-            height: window.innerHeight
+        this.renderer = new BoidsRenderer()
+        this.boidContainer = new BoidContainer()
+        this.boids = new Boids()
+        this.count = 200
+        this.running = false
+        this.setCameraDefault()
+    }
+
+    createBoids() {
+        this.renderer.scene.remove(this.boids.boidsGroup)
+        this.boids.createRandomBoids(this.count)
+        this.renderer.scene.add(this.boids.boidsGroup)
+        this.renderer.scene.add(this.boidContainer)
+    }
+
+    setCameraDefault() {
+        this.renderer.updateFunction = () => {
+            this.boids.update()
+            // this.renderer.camera.lookAt(this.boids.getCenter())
         }
-        this.renderer.setSize(this.size.width, this.size.height);
-        document.querySelector("#app")?.appendChild(this.renderer.domElement);
-        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.z = 100;
-        this.scene = new THREE.Scene();
-        this.clock = new THREE.Clock();
-        this.setup()
     }
 
-    setup() {
-        this.resize()
-        for (let i = 0; i < 100; i++) {
-        this.boids.push(new Boid(this.scene, this.size))
-        }
+    stop() {
+        if (!this.running) return
+        this.renderer.stop()
+        this.running = false
     }
 
-    resize() {
-        window.addEventListener('resize', () => {
-            this.camera.aspect = window.innerWidth / window.innerHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-        })
+    start() {
+        if (!this.running) this.createBoids()
+        this.renderer.start()
+        this.running = true
     }
-
-    public addBoid(boid: Boid) {
-        this.boids.push(boid);
-    }
-
-    public removeBoid(boid: Boid) {
-        this.boids.splice(this.boids.indexOf(boid), 1);
-    }
-
-    public update() {
-        this.boids.forEach(boid => boid.update(this.boids));
-    }
-
-    render() {
-        this.update()
-        this.renderer.render(this.scene, this.camera);
-        requestAnimationFrame(() => this.render());
-    }
-
 }
