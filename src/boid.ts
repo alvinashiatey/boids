@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import * as dat from 'dat.gui';
+
+
+import sky from '../public/sky.png';
 
 export type BoidSettings = {
     maxSpeed: number,
@@ -10,11 +14,10 @@ export type BoidSettings = {
     alignmentDist: number
     separationDist: number
     cohesionDist: number
+    boundingContainer: string
 }
 
-const getRandomVector = (min: number =0, max: number=0) => Math.floor(Math.random() * (max + 1 - min)) + min;
-
-export class BoidContainer extends THREE.Mesh{
+export class BoidBoxContainer extends THREE.Mesh{
     constructor(width: number=2300, height: number=2300, depth: number = 2300) {
         const geometry = new THREE.BoxGeometry(width, height, depth, 10, 10, 10);
         const material = new THREE.MeshBasicMaterial({
@@ -29,6 +32,53 @@ export class BoidContainer extends THREE.Mesh{
     }
 }
 
+export class BoidSphereContainer extends THREE.Mesh{
+    constructor(radius: number=2300, widthSegments: number=100, heightSegments: number=100) {
+        const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+        const texture = new THREE.TextureLoader().load(sky);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            // opacity: 0.2,
+            wireframe: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            map: texture,
+            side: THREE.DoubleSide
+        }) as THREE.MeshBasicMaterial;
+        super(geometry, material);
+        this.initGUI()
+    }
+
+    initGUI() {
+        const gui = new dat.GUI();
+
+        const materialFolder = gui.addFolder('Material');
+        materialFolder.add(this.material, 'opacity', 0, 1);
+        materialFolder.add(this.material, 'wireframe');
+
+        const textureFolder = gui.addFolder('Texture');
+        textureFolder.add(this, 'loadTexture');
+    }
+
+    protected loadTexture(): void {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.onchange = () => {
+            const file = fileInput.files?.[0];
+            if (file) {
+                const textureLoader = new THREE.TextureLoader();
+                if (this.material instanceof THREE.MeshBasicMaterial) {
+                    this.material.map = textureLoader.load(URL.createObjectURL(file));
+                    this.material.needsUpdate = true;
+                }
+            }
+        };
+        fileInput.click();
+    }
+}
+
 export class Boid extends THREE.Mesh {
     public velocity: THREE.Vector3;
     public acceleration: THREE.Vector3;
@@ -38,13 +88,17 @@ export class Boid extends THREE.Mesh {
         super(geometry, material);
         this.velocity = new THREE.Vector3();
         this.acceleration = new THREE.Vector3();
-        const x = getRandomVector(500, 1000);
-        const y = THREE.MathUtils.degToRad(getRandomVector(180));
-        const z = THREE.MathUtils.degToRad(getRandomVector(360));
+        const x = this.getRandomInt(500, 1000);
+        const y = THREE.MathUtils.degToRad(this.getRandomInt(180));
+        const z = THREE.MathUtils.degToRad(this.getRandomInt(360));
         this.position.x = Math.sin(y) * Math.cos(z) * x;
         this.position.y = Math.sin(y) * Math.sin(z) * x;
         this.position.z = Math.cos(y) * x;
         this.velocity.set(THREE.MathUtils.randFloat(-100, 100)*0.1,THREE.MathUtils.randFloat(-100, 100)*0.1, THREE.MathUtils.randFloat(-100, 100)*0.1);
+    }
+
+    private getRandomInt(min: number=0, max:number =0):number{
+        return  Math.floor(Math.random() * (max + 1 - min)) + min;
     }
 
     public update(boids: Boid[], settings: BoidSettings) {
@@ -65,7 +119,6 @@ export class Boid extends THREE.Mesh {
         this.lookAt(heading);
     }
 
-
     public applyForce(force: THREE.Vector3) {
         this.acceleration.add(force.clone());
     }
@@ -77,38 +130,11 @@ export class Boid extends THREE.Mesh {
         this.applyForce(sep);
         this.applyForce(ali);
         this.applyForce(coh);
+        if (settings.boundingContainer == "box") {
         this.applyForce(this.avoidBoxContainer(settings.centerDist, settings.centerDist, settings.centerDist))
-
-    }
-
-
-    public align(boids: Boid[], settings:BoidSettings): THREE.Vector3 {
-        const sumVector = new THREE.Vector3();
-        let cnt = 0
-        const maxSpeed = settings.maxSpeed;
-        const maxForce = settings.alignmentWeight;
-        const alignmentDist = settings.alignmentDist;
-        const steerVector = new THREE.Vector3();
-
-        for (let other of boids) {
-            const distance = this.position.distanceTo(other.position);
-            if (other != this && distance < alignmentDist) {
-                sumVector.add(other.velocity);
-                cnt++;
-            }
+        } else if (settings.boundingContainer == "sphere") {
+        this.applyForce(this.avoidSphereContainer(settings.centerDist))
         }
-
-        if (cnt > 0) {
-            sumVector.divideScalar(cnt);
-            sumVector.normalize();
-            sumVector.multiplyScalar(maxSpeed);
-            steerVector.subVectors(sumVector, this.velocity);
-            if (steerVector.length() > maxForce) {
-                steerVector.clampLength(0, maxForce);
-            }
-        }
-
-        return steerVector;
     }
 
     public seek(target: THREE.Vector3, settings: BoidSettings): THREE.Vector3 {
@@ -126,6 +152,39 @@ export class Boid extends THREE.Mesh {
             steerVector.clampLength(0, maxForce);
         }
         return steerVector;
+    }
+
+    public calculateSteering(boids: Boid[], getVector: (boid: Boid) => THREE.Vector3, config: {force: string, maxSpeed: number, maxForce:number, VecDistance: number}): THREE.Vector3 {
+        const sumVector = new THREE.Vector3();
+        let cnt = 0
+        const maxSpeed = config.maxSpeed;
+        const maxForce = config.maxForce;
+        const VecDistance = config.VecDistance;
+        const steerVector = new THREE.Vector3();
+
+        for (let other of boids) {
+            const distance = this.position.distanceTo(other.position);
+            if (other != this && distance < VecDistance) {
+                sumVector.add(getVector(other));
+                cnt++;
+            }
+        }
+
+        if (cnt > 0) {
+            sumVector.divideScalar(cnt);
+            sumVector.normalize();
+            sumVector.multiplyScalar(maxSpeed);
+            steerVector.subVectors(sumVector, this.velocity);
+            if (steerVector.length() > maxForce) {
+                steerVector.clampLength(0, maxForce);
+            }
+        }
+
+        return steerVector;
+    }
+
+    public align(boids: Boid[], settings:BoidSettings): THREE.Vector3 {
+        return this.calculateSteering(boids, (boid: Boid) => boid.velocity, {force: "align", maxSpeed: settings.maxSpeed, maxForce: settings.maxForce, VecDistance: settings.alignmentDist});
     }
 
     public cohesion(boids: Boid[], settings: BoidSettings) : THREE.Vector3 {
@@ -151,35 +210,13 @@ export class Boid extends THREE.Mesh {
     }
 
     public separate(boids: Boid[], settings: BoidSettings) : THREE.Vector3 {
-        const sumVector = new THREE.Vector3();
-        let cnt = 0
-        const maxSpeed = settings.maxSpeed;
-        const maxForce = settings.separationWeight;
-        const separationDist = settings.separationDist;
-        const steerVector = new THREE.Vector3();
-
-        for (let other of boids) {
-            const distance = this.position.distanceTo(other.position);
-            if (other != this && distance < separationDist) {
-                const diff = new THREE.Vector3();
-                diff.subVectors(this.position, other.position);
-                diff.normalize();
-                diff.divideScalar(distance);
-                sumVector.add(diff);
-                cnt++;
-            }
-        }
-
-        if (cnt > 0) {
-            sumVector.divideScalar(cnt);
-            sumVector.normalize();
-            sumVector.multiplyScalar(maxSpeed);
-            steerVector.subVectors(sumVector, this.velocity);
-            if (steerVector.length() > maxForce) {
-                steerVector.clampLength(0, maxForce);
-            }
-        }
-        return steerVector;
+        return this.calculateSteering(boids, (boid: Boid) => {
+            const diff = new THREE.Vector3();
+            diff.subVectors(this.position, boid.position);
+            diff.normalize();
+            diff.divideScalar(this.position.distanceTo(boid.position));
+            return diff;
+        }, {force: "separate", maxSpeed: settings.maxSpeed, maxForce: settings.separationWeight, VecDistance: settings.separationDist});
     }
 
     private avoid( wall: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
@@ -207,6 +244,17 @@ export class Boid extends THREE.Mesh {
         return sumVector
     }
 
+    public avoidSphereContainer( radius = 100) {
+        this.geometry.computeBoundingSphere();
+        const boundingSphere = this.geometry.boundingSphere;
+        if (!boundingSphere) return new THREE.Vector3();
+        const distance = radius - this.position.length() - boundingSphere.radius * 2
+        const steerVector = this.position.clone()
+        steerVector.normalize()
+        steerVector.multiplyScalar(-1 / (Math.pow(distance, 2)))
+        steerVector.multiplyScalar(Math.pow(this.velocity.length(), 3))
+        return steerVector
+    }
 
 }
 
@@ -223,6 +271,7 @@ export class Boids {
         alignmentDist: 85,
         separationDist: 70,
         cohesionDist: 200,
+        boundingContainer: "sphere",
     }) {
         this.settings = settings;
         this.boidsGroup = new THREE.Group();
@@ -270,18 +319,86 @@ export class Boids {
         const boids = this.boidsGroup.children as Boid[];
         boids.forEach(boid => boid.update(boids, this.settings));
     }
+
+    public getRandomBoid() {
+        return this.boidsGroup.children[Math.floor(Math.random() * this.boidsGroup.children.length)] as Boid;
+    }
+}
+
+export class BoidCamera extends THREE.PerspectiveCamera {
+    private velocity: THREE.Vector3;
+    private readonly acceleration: THREE.Vector3;
+    private readonly maxSpeed: number;
+    private readonly maxForce: number;
+
+    constructor() {
+        super(45, window.innerWidth / window.innerHeight, 1, 10000);
+        this.position.set(0, 0, 0);
+        this.velocity = new THREE.Vector3();
+        this.acceleration = new THREE.Vector3();
+        this.maxSpeed = 7;
+        this.maxForce = 0.04;
+    }
+
+    public applyForce(force: THREE.Vector3) {
+        this.acceleration.add(force);
+    }
+
+    public embodyBoid(boid: Boid) {
+        const boidPos = new THREE.Vector3();
+        const offsetTarget = boid.velocity.clone();
+        offsetTarget.multiplyScalar(-20);
+        boidPos.addVectors(boid.position, offsetTarget);
+        this.setCameraPosition(boid.position)
+        this.seek(boid.position);
+    }
+
+    public seek(target: THREE.Vector3) {
+        const desired = new THREE.Vector3();
+        desired.subVectors(target, this.position);
+        desired.normalize();
+        desired.multiplyScalar(this.maxSpeed);
+        const steer = new THREE.Vector3();
+        steer.subVectors(desired, this.velocity);
+        if (steer.length() > this.maxForce) {
+            steer.clampLength(0, this.maxForce);
+        }
+        this.applyForce(steer);
+    }
+
+    public setCameraPosition(target: THREE.Vector3) {
+        this.position.set(
+            target.x,
+            target.y,
+            target.z);
+        this.velocity = new THREE.Vector3();
+    }
+
+    public update(target: Boid) {
+        this.velocity.add(this.acceleration);
+        if (this.velocity.length() > this.maxSpeed) {
+            this.velocity.clampLength(0, this.maxSpeed);
+        }
+        this.position.add(this.velocity);
+        this.acceleration.multiplyScalar(0);
+        this.embodyBoid(target);
+    }
+
+
+
+
 }
 
 export class BoidsRenderer {
     private renderer: THREE.WebGLRenderer;
     public scene: THREE.Scene;
-    public camera: THREE.PerspectiveCamera;
+    public camera: BoidCamera;
     private readonly rendererContainer: HTMLElement | null;
     private animationFrame: number;
     public updateFunction: (() => void) | undefined;
 
     constructor() {
-        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+        this.camera = new BoidCamera()
         this.camera.position.y = 0;
         this.camera.position.x = 0;
         this.camera.position.z = 1800;
